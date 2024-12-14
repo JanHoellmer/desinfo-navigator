@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import instructor
 from typing import List, Union, Generator, Iterator
-from schemas import OpenAIChatMessage
-from pydantic import BaseModel
-from openai import AzureOpenAI, RateLimitError
+from pydantic import BaseModel, Field
+from openai import AzureOpenAI
 import os
 from enum import Enum
-import json
 
 deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT")
 
@@ -72,30 +70,36 @@ class Pipeline:
 
         return result
     
-class Strategy(Enum):
-    FAKE_EXPERTS = "Pseudo-Experten"
-    LOGICAL_FALLACIES = "Logischer Trugschluss"
-    IMPOSSIBLE_EXPECTATIONS = "Unerfüllbare Erwartungen"
-    CHERRY_PICKING = "Rosinenpickerei"
-    CONSPIRACY_THEORIES = "Verschwörungsmythen"
+fake_experts_desc = "Eine unqualifizierte Person oder Institution wird als Quelle glaubwürdiger Informationen präsentiert."
+logical_fallacies_desc = "Argumente, bei denen sich die Schlussfolgerung nicht logischerweise aus den Prämissen ergibt. Auch bekannt als Non-Sequitur."
+impossible_expecations_desc = "Unrealistische Standards der Sicherheit fordern, bevor man die Wissenschaft akzeptiert."
+cherry_picking_desc = "Sorgfältige Auswahl von Daten, die eine Position zu bestätigen scheinen, während andere Daten ignoriert werden, die dieser Position widersprechen."
+conspiracy_theory_desc = "Eine Verschwörung zur Umsetzung eines üblen Plans vermuten, wie das Verbergen der Wahrheit oder das Weitergeben von Falschinformationen."
+
+class Strategy(Enum, BaseModel):
+    FAKE_EXPERTS = Field(default="Pseudo-Experten", description=fake_experts_desc)
+    LOGICAL_FALLACIES = Field(default="Logischer Trugschluss", description=logical_fallacies_desc) 
+    IMPOSSIBLE_EXPECTATIONS = Field(default="Unerfüllbare Erwartungen", description=impossible_expecations_desc) 
+    CHERRY_PICKING = Field(default="Rosinenpickerei", description=cherry_picking_desc) 
+    CONSPIRACY_THEORIES = Field(default="Verschwörungsmythen", description=conspiracy_theory_desc) 
 
     def get_description(self) -> str:
         if self == Strategy.FAKE_EXPERTS:
-            return "Eine unqualifizierte Person oder Institution wird als Quelle glaubwürdiger Informationen präsentiert."
+            return fake_experts_desc
         elif self == Strategy.LOGICAL_FALLACIES:
-            return "Argumente, bei denen sich die Schlussfolgerung nicht logischerweise aus den Prämissen ergibt. Auch bekannt als Non-Sequitur."
+            return logical_fallacies_desc
         elif self == Strategy.IMPOSSIBLE_EXPECTATIONS:
-            return "Unrealistische Standards der Sicherheit fordern, bevor man die Wissenschaft akzeptiert."
+            return impossible_expecations_desc
         elif self == Strategy.CHERRY_PICKING:
-            return "Sorgfältige Auswahl von Daten, die eine Position zu bestätigen scheinen, während andere Daten ignoriert werden, die dieser Position widersprechen."
+            return cherry_picking_desc
         elif self == Strategy.CONSPIRACY_THEORIES:
-            return "Eine Verschwörung zur Umsetzung eines üblen Plans vermuten, wie das Verbergen der Wahrheit oder das Weitergeben von Falschinformationen."
+            return conspiracy_theory_desc
         else:
             raise NotImplementedError(f"{self} not implemented.")
     
 class AppliedStrategy(BaseModel):
-    content: str
-    strategy: Strategy
+    strategy: Strategy = Field(description="Die Strategie, welche möglicherweise angewendet wurde.")
+    content: str = Field(description="Der Textstelle des Textes, auf die möglicherweise die Strategie angewendet wurde.")
 
     @classmethod
     def return_example_list(cls) -> list[AppliedStrategy]:
@@ -174,8 +178,6 @@ def identify_strategies(user_message: str, openai_client: AzureOpenAI) -> list[A
 
     prompt = """
     Deine Aufgabe ist es, aus dem [TEXT] Strategien für Desinformationen zu identifizieren und zusammen mit den zugehörigen Textstellen zu extrahieren.
-    Die möglichen Strategien, welche verwendet werden können, sind:
-    $PLACEHOLDER_STRATEGY_DESCRIPTIONS
 
     Hier sind Beispiele für die verschiedenen Strategien:
     $PLACEHOLDER_STRATEGY_EXAMPLES
@@ -183,20 +185,10 @@ def identify_strategies(user_message: str, openai_client: AzureOpenAI) -> list[A
     [TEXT]
     $PLACEHOLDER_TEXT
 
-    [OUTPUT-FORMAT]
-    {{
-        "verwendete_strategien": list[
-            {{
-                "name": str,
-                "textstelle": str
-            }}
-        ]
-    }}
-
-    Verwendete Strategien im [OUTPUT-FORMAT] vom [TEXT]:
+    Verwendete Strategien des [TEXT]s:
     """
-
     prompt = prompt.replace("$PLACEHOLDER_TEXT", user_message)
+    prompt = prompt.replace("$PLACEHOLDER_STRATEGY_EXAMPLES", get_strategy_examples())
 
     client = instructor.from_openai(openai_client)
 
@@ -219,3 +211,6 @@ def get_ampel(strategies: list[AppliedStrategy]) -> str:
         return "Ampel gelb"
     else:
         return "Ampel rot"
+    
+def get_strategy_examples() -> str:
+    return ""
