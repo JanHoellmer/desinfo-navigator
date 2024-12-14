@@ -130,6 +130,7 @@ async def load_module_from_path(module_name, module_path):
 
     try:
         # Read the module content
+        print(module_path)
         with open(module_path, "r") as file:
             content = file.read()
 

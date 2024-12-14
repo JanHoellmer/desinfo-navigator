@@ -2,20 +2,16 @@ services:
   open-webui:
     image: ghcr.io/open-webui/open-webui:latest
     container_name: open-webui
-    depends_on:
-      - litellm
     volumes:
       - open-webui:/app/backend/data
     ports:
       - 9999:8080
     environment:
       WEBUI_SECRET_KEY: "secret-key-1234"
-#      ENABLE_RAG_WEB_SEARCH: True
-#      RAG_WEB_SEARCH_ENGINE: "searxng"
-#      RAG_WEB_SEARCH_RESULT_COUNT: 3
-#      RAG_WEB_SEARCH_CONCURRENT_REQUESTS: 10
-#      SEARXNG_QUERY_URL: "http://searxng:9998/search?q=<query>"
     restart: unless-stopped
+    extra_hosts:
+    - "host.docker.internal:host-gateway"
+
   open-webui-pipelines:
     build:
       context: ./
@@ -27,26 +23,7 @@ services:
     restart: unless-stopped
     ports:
       - "9099:9099"
-  litellm:
-    build:
-      context: .
-      args:
-        target: runtime
-    image: ghcr.io/berriai/litellm:main-latest
-    depends_on:
-      - db
-    volumes:
-      - ./litellm-config.yaml:/app/config.yaml
-    # The below two are my suggestion
-    command:
-      - "--config=/app/config.yaml"
-    ports:
-      - "4000:4000" # Map the container port to the host, change the host port if necessary
-    environment:
-        DATABASE_URL: "postgresql://llmproxy:dbpassword9090@db:5432/litellm"
-        STORE_MODEL_IN_DB: "True" # allows adding models to proxy via UI
-    env_file:
-      - .env # Load local .env file 
+    env_file: ".env"
   db:
     image: postgres
     restart: always
@@ -59,14 +36,6 @@ services:
       interval: 1s
       timeout: 5s
       retries: 10
-#  searxng:
-#    image: searxng/searxng:latest
-#    container_name: searxng
-#    ports:
-#      - "9998:8080"
-#    volumes:
-#      - ./searxng:/etc/searxng
-#    restart: always
 
 volumes:
   open-webui: {}
