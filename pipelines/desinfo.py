@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import instructor
+import pandas as pd
 from typing import List, Union, Generator, Iterator
 from pydantic import BaseModel, Field
 from openai import AzureOpenAI
@@ -8,6 +9,7 @@ import os
 from enum import Enum
 
 deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT")
+
 
 class Pipeline:
     class Valves(BaseModel):
@@ -22,14 +24,11 @@ class Pipeline:
 
         # The name of the pipeline.
         self.name = "DesinfoNavigator"
-        endpoint =os.getenv("AZURE_OPENAI_ENDPOINT")
+        endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
         api_key = os.getenv("AZURE_OPENAI_API_KEY")
 
-        self.llm = AzureOpenAI(
-            max_retries=5,
-            api_key=api_key,
-            azure_endpoint=endpoint
-        )
+        self.llm = AzureOpenAI(max_retries=5, api_key=api_key, azure_endpoint=endpoint)
+        self.strategy_examples = get_strategy_examples()
 
     async def on_startup(self):
         # This function is called when the server is started.
@@ -59,8 +58,14 @@ class Pipeline:
             print("Title Generation Request")
 
         if is_first_message(messages):
-            strategies: list[AppliedStrategy] = identify_strategies(user_message, openai_client=self.llm)
-            result = AppliedStrategy.construct_answer_from_list(strategies=strategies, original_text=user_message, openai_client=self.llm)
+            strategies: list[AppliedStrategy] = identify_strategies(
+                user_message, openai_client=self.llm
+            )
+            result = AppliedStrategy.construct_answer_from_list(
+                strategies=strategies,
+                original_text=user_message,
+                openai_client=self.llm,
+            )
         else:
             # follow up
             completion = self.llm.chat.completions.create(
@@ -69,19 +74,27 @@ class Pipeline:
             result = completion.choices[0].message.content
 
         return result
-    
+
+
 fake_experts_desc = "Eine unqualifizierte Person oder Institution wird als Quelle glaubwürdiger Informationen präsentiert."
 logical_fallacies_desc = "Argumente, bei denen sich die Schlussfolgerung nicht logischerweise aus den Prämissen ergibt. Auch bekannt als Non-Sequitur."
 impossible_expecations_desc = "Unrealistische Standards der Sicherheit fordern, bevor man die Wissenschaft akzeptiert."
 cherry_picking_desc = "Sorgfältige Auswahl von Daten, die eine Position zu bestätigen scheinen, während andere Daten ignoriert werden, die dieser Position widersprechen."
 conspiracy_theory_desc = "Eine Verschwörung zur Umsetzung eines üblen Plans vermuten, wie das Verbergen der Wahrheit oder das Weitergeben von Falschinformationen."
 
+
 class Strategy(Enum, BaseModel):
     FAKE_EXPERTS = Field(default="Pseudo-Experten", description=fake_experts_desc)
-    LOGICAL_FALLACIES = Field(default="Logischer Trugschluss", description=logical_fallacies_desc) 
-    IMPOSSIBLE_EXPECTATIONS = Field(default="Unerfüllbare Erwartungen", description=impossible_expecations_desc) 
-    CHERRY_PICKING = Field(default="Rosinenpickerei", description=cherry_picking_desc) 
-    CONSPIRACY_THEORIES = Field(default="Verschwörungsmythen", description=conspiracy_theory_desc) 
+    LOGICAL_FALLACIES = Field(
+        default="Logischer Trugschluss", description=logical_fallacies_desc
+    )
+    IMPOSSIBLE_EXPECTATIONS = Field(
+        default="Unerfüllbare Erwartungen", description=impossible_expecations_desc
+    )
+    CHERRY_PICKING = Field(default="Rosinenpickerei", description=cherry_picking_desc)
+    CONSPIRACY_THEORIES = Field(
+        default="Verschwörungsmythen", description=conspiracy_theory_desc
+    )
 
     def get_description(self) -> str:
         if self == Strategy.FAKE_EXPERTS:
@@ -96,27 +109,32 @@ class Strategy(Enum, BaseModel):
             return conspiracy_theory_desc
         else:
             raise NotImplementedError(f"{self} not implemented.")
-    
+
+
 class AppliedStrategy(BaseModel):
-    strategy: Strategy = Field(description="Die Strategie, welche möglicherweise angewendet wurde.")
-    content: str = Field(description="Der Textstelle des Textes, auf die möglicherweise die Strategie angewendet wurde.")
+    strategy: Strategy = Field(
+        description="Die Strategie, welche möglicherweise angewendet wurde."
+    )
+    content: str = Field(
+        description="Der Textstelle des Textes, auf die möglicherweise die Strategie angewendet wurde."
+    )
 
     @classmethod
     def return_example_list(cls) -> list[AppliedStrategy]:
         return [
             AppliedStrategy(
                 content="Das Klima hat sich in der Vergangenheit wegen natürlichen Ursachen verändert, also haben die heutigen Veränderungen ebenfalls natürliche Ursachen.",
-                strategy=Strategy.LOGICAL_FALLACIES
+                strategy=Strategy.LOGICAL_FALLACIES,
             ),
             AppliedStrategy(
                 content="Wissenschaftler können nicht einmal das Wetter in der nächsten Woche vorhersagen. Wie sollen sie also das Wetter in 100 Jahren vorhersagen können?",
-                strategy=Strategy.IMPOSSIBLE_EXPECTATIONS
-            )
+                strategy=Strategy.IMPOSSIBLE_EXPECTATIONS,
+            ),
         ]
-    
+
     def create_action(self, original_text: str, openai_client: AzureOpenAI) -> str:
-        system_prompt="Du bist ein Experte, das darauf spezialisiert ist, Menschen beim Hinterfragen von Argumenten zu unterstützen."
-        
+        system_prompt = "Du bist ein Experte, das darauf spezialisiert ist, Menschen beim Hinterfragen von Argumenten zu unterstützen."
+
         text = original_text.replace("\n", " ")
         prompt = f"""
         Aufgabe:
@@ -138,24 +156,39 @@ class AppliedStrategy(BaseModel):
         """
 
         completion = openai_client.chat.completions.create(
-            model=deployment, messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
+            model=deployment,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
         )
 
         return completion.choices[0].message.content
-    
-    
+
     def stringify_long(self, original_text: str, openai_client: AzureOpenAI) -> str:
         return f"""\t- Definition: {self.strategy.get_description()}
         \t- Passage: {self.content}
         \t- Individueller Denkauftrag: {self.create_action(original_text=original_text, openai_client=openai_client)}"""
-    
+
     def stringify_short(self) -> str:
         return f"\t- {self.strategy.value}"
 
     @classmethod
-    def construct_answer_from_list(cls, strategies: list[AppliedStrategy], original_text: str, openai_client: AzureOpenAI) -> str:
-        individual_strategies_long = "\n\n".join([strategy.stringify_long(original_text, openai_client) for strategy in strategies])
-        individual_strategies_short = "\n".join([strategy.stringify_short() for strategy in strategies])
+    def construct_answer_from_list(
+        cls,
+        strategies: list[AppliedStrategy],
+        original_text: str,
+        openai_client: AzureOpenAI,
+    ) -> str:
+        individual_strategies_long = "\n\n".join(
+            [
+                strategy.stringify_long(original_text, openai_client)
+                for strategy in strategies
+            ]
+        )
+        individual_strategies_short = "\n".join(
+            [strategy.stringify_short() for strategy in strategies]
+        )
 
         return f"""# {get_ampel(strategies)}
 
@@ -165,16 +198,21 @@ class AppliedStrategy(BaseModel):
 
 ## Individuelle Anweisungen
 {individual_strategies_long}"""
-    
+
+
 AppliedStrategy.model_rebuild()
+
 
 class ExtractedStrategies(BaseModel):
     strategies: list[AppliedStrategy]
 
-def identify_strategies(user_message: str, openai_client: AzureOpenAI) -> list[AppliedStrategy]:
-    """ identifies strategies from a user message """
 
-    system_prompt="Du bist ein sorgfältiger Desinformation-Experte, welcher aus Texten die verwendeten Strategien für Desinformation identifiziert."
+def identify_strategies(
+    user_message: str, openai_client: AzureOpenAI
+) -> list[AppliedStrategy]:
+    """identifies strategies from a user message"""
+
+    system_prompt = "Du bist ein sorgfältiger Desinformation-Experte, welcher aus Texten die verwendeten Strategien für Desinformation identifiziert."
 
     prompt = """
     Deine Aufgabe ist es, aus dem [TEXT] Strategien für Desinformationen zu identifizieren und zusammen mit den zugehörigen Textstellen zu extrahieren.
@@ -193,16 +231,22 @@ def identify_strategies(user_message: str, openai_client: AzureOpenAI) -> list[A
     client = instructor.from_openai(openai_client)
 
     completion: ExtractedStrategies = client.chat.completions.create(
-        model=deployment, response_model=ExtractedStrategies, messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
+        model=deployment,
+        response_model=ExtractedStrategies,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ],
     )
-    
-    return [AppliedStrategy(**strategy) for strategy in completion.strategies]
 
+    return [AppliedStrategy(**strategy) for strategy in completion.strategies]
 
     # return AppliedStrategy.return_example_list()
 
+
 def is_first_message(messages: list[dict]) -> bool:
     return len(messages) == 1
+
 
 def get_ampel(strategies: list[AppliedStrategy]) -> str:
     if len(strategies) == 0:
@@ -211,13 +255,25 @@ def get_ampel(strategies: list[AppliedStrategy]) -> str:
         return "Ampel gelb"
     else:
         return "Ampel rot"
-    
+
+
 def get_strategy_examples() -> str:
-    return """
-    ---
-    Strategie:
-        Beispiel1:
-        Beispiel2:
-    ---
-    Strategie:
-    """
+    df = pd.read_excel("../Beispiel.xlsx", sheet_name="Sheet1")
+    df.sort_values(by="PLURV-Kategorie")
+
+    def get_category_examples():
+        for strategy in df["PLURV-Kategorie"].unique():
+            strategy_description = {}
+            examples = "\n".join(
+                [
+                    f"\tBeispiel {i}: {example}"
+                    for i, example in enumerate(
+                        df[df["PLURV-Kategorie"] == strategy]["Aussage"]
+                        .values()
+                        .to_list()
+                    )
+                ]
+            )
+            yield f"Strategie: {strategy_description[strategy]}\n{examples}"
+
+    return "---".join(get_category_examples())
