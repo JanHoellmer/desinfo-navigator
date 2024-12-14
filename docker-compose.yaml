@@ -13,6 +13,7 @@ services:
     - "host.docker.internal:host-gateway"
 
   open-webui-pipelines:
+    profiles: [pipelines]
     build:
       context: ./
       dockerfile: ./Dockerfile
