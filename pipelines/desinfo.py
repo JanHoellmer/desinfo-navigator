@@ -213,4 +213,11 @@ def get_ampel(strategies: list[AppliedStrategy]) -> str:
         return "Ampel rot"
     
 def get_strategy_examples() -> str:
-    return ""
+    return """
+    ---
+    Strategie:
+        Beispiel1:
+        Beispiel2:
+    ---
+    Strategie:
+    """
