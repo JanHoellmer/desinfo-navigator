@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import instructor
 from typing import List, Union, Generator, Iterator
 from schemas import OpenAIChatMessage
 from pydantic import BaseModel
 from openai import AzureOpenAI, RateLimitError
 import os
 from enum import Enum
+import json
 
+deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT")
 
 class Pipeline:
     class Valves(BaseModel):
@@ -23,7 +26,6 @@ class Pipeline:
         self.name = "DesinfoNavigator"
         endpoint =os.getenv("AZURE_OPENAI_ENDPOINT")
         api_key = os.getenv("AZURE_OPENAI_API_KEY")
-        self.deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT")
 
         self.llm = AzureOpenAI(
             max_retries=5,
@@ -59,12 +61,12 @@ class Pipeline:
             print("Title Generation Request")
 
         if is_first_message(messages):
-            strategies: list[AppliedStrategy] = identify_strategies(user_message)
+            strategies: list[AppliedStrategy] = identify_strategies(user_message, openai_client=self.llm)
             result = AppliedStrategy.construct_answer_from_list(strategies=strategies, original_text=user_message, openai_client=self.llm)
         else:
             # follow up
             completion = self.llm.chat.completions.create(
-                model=self.deployment, messages=messages
+                model=deployment, messages=messages
             )
             result = completion.choices[0].message.content
 
@@ -93,7 +95,6 @@ class Strategy(Enum):
     
 class AppliedStrategy(BaseModel):
     content: str
-    offset: int
     strategy: Strategy
 
     @classmethod
@@ -101,18 +102,43 @@ class AppliedStrategy(BaseModel):
         return [
             AppliedStrategy(
                 content="Das Klima hat sich in der Vergangenheit wegen natürlichen Ursachen verändert, also haben die heutigen Veränderungen ebenfalls natürliche Ursachen.",
-                offset=0,
                 strategy=Strategy.LOGICAL_FALLACIES
             ),
             AppliedStrategy(
                 content="Wissenschaftler können nicht einmal das Wetter in der nächsten Woche vorhersagen. Wie sollen sie also das Wetter in 100 Jahren vorhersagen können?",
-                offset=0,
                 strategy=Strategy.IMPOSSIBLE_EXPECTATIONS
             )
         ]
     
     def create_action(self, original_text: str, openai_client: AzureOpenAI) -> str:
-        return "PLACEHOLDER_ACTION"
+        system_prompt="Du bist ein Experte, das darauf spezialisiert ist, Menschen beim Hinterfragen von Argumenten zu unterstützen."
+        
+        text = original_text.replace("\n", " ")
+        prompt = f"""
+        Aufgabe:
+            Du erhältst einen originalen Text und eine Textpassage daraus.
+            Dazu wird eine Argumentationsstrategie angegeben, die eventuell angewendet wurde, sowie eine kurze Erklärung, was diese Strategie ist.
+
+        Deine Aufgaben:
+            Erläutere mit Hilfe der Textpassage wie die Strategie möglicherweise angewendet wurde und welche Aspekte recherchiert oder überlegt werden müssen, um zu entscheiden, ob die Strategie tatsächlich angewendet wurde.
+
+        In deiner Antwort solltest du die Anwendung der Strategie anhand der Textpassage erläutern und eine konrete Handlungsanweisung geben, mit der überprüft werden kann, ob diese Strategie angewendet wurde.
+        Fasse dich dabei sehr kurz (maximal 2 prägnante Sätze).
+        Berücksichtige dabei, dass noch nicht bestätigt ist, dass die Strategie wirklich angewendet wurde. Formuliere dementsprechend Teile passend im Konjunktiv.
+
+        Input:
+            Originaler Text: {text}
+            Textpassage: {self.content}
+            Verwendete Strategie der Desinformation: {self.strategy.value}
+            Erklärung der Strategie: {self.strategy.get_description()}
+        """
+
+        completion = openai_client.chat.completions.create(
+            model=deployment, messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
+        )
+
+        return completion.choices[0].message.content
+    
     
     def stringify_long(self, original_text: str, openai_client: AzureOpenAI) -> str:
         return f"""\t- Definition: {self.strategy.get_description()}
@@ -120,27 +146,76 @@ class AppliedStrategy(BaseModel):
         \t- Individueller Denkauftrag: {self.create_action(original_text=original_text, openai_client=openai_client)}"""
     
     def stringify_short(self) -> str:
-        return f"\t- {self.strategy.name}"
+        return f"\t- {self.strategy.value}"
 
     @classmethod
     def construct_answer_from_list(cls, strategies: list[AppliedStrategy], original_text: str, openai_client: AzureOpenAI) -> str:
         individual_strategies_long = "\n\n".join([strategy.stringify_long(original_text, openai_client) for strategy in strategies])
         individual_strategies_short = "\n".join([strategy.stringify_short() for strategy in strategies])
-        return f"""
-        AMPEL
 
-        Es liegen folgende Merkmale von Desinformation vor
-        {individual_strategies_short}
+        return f"""# {get_ampel(strategies)}
 
-        Individuelle Anweisungen
-        {individual_strategies_long}
-        """
+
+## Es liegen folgende Merkmale von Desinformation vor
+{individual_strategies_short}
+
+## Individuelle Anweisungen
+{individual_strategies_long}"""
     
 AppliedStrategy.model_rebuild()
 
-def identify_strategies(user_message: str) -> list[AppliedStrategy]:
+class ExtractedStrategies(BaseModel):
+    strategies: list[AppliedStrategy]
+
+def identify_strategies(user_message: str, openai_client: AzureOpenAI) -> list[AppliedStrategy]:
     """ identifies strategies from a user message """
-    return AppliedStrategy.return_example_list()
+
+    system_prompt="Du bist ein sorgfältiger Desinformation-Experte, welcher aus Texten die verwendeten Strategien für Desinformation identifiziert."
+
+    prompt = """
+    Deine Aufgabe ist es, aus dem [TEXT] Strategien für Desinformationen zu identifizieren und zusammen mit den zugehörigen Textstellen zu extrahieren.
+    Die möglichen Strategien, welche verwendet werden können, sind:
+    $PLACEHOLDER_STRATEGY_DESCRIPTIONS
+
+    Hier sind Beispiele für die verschiedenen Strategien:
+    $PLACEHOLDER_STRATEGY_EXAMPLES
+
+    [TEXT]
+    $PLACEHOLDER_TEXT
+
+    [OUTPUT-FORMAT]
+    {{
+        "verwendete_strategien": list[
+            {{
+                "name": str,
+                "textstelle": str
+            }}
+        ]
+    }}
+
+    Verwendete Strategien im [OUTPUT-FORMAT] vom [TEXT]:
+    """
+
+    prompt = prompt.replace("$PLACEHOLDER_TEXT", user_message)
+
+    client = instructor.from_openai(openai_client)
+
+    completion: ExtractedStrategies = client.chat.completions.create(
+        model=deployment, response_model=ExtractedStrategies, messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
+    )
+    
+    return [AppliedStrategy(**strategy) for strategy in completion.strategies]
+
+
+    # return AppliedStrategy.return_example_list()
 
 def is_first_message(messages: list[dict]) -> bool:
     return len(messages) == 1
+
+def get_ampel(strategies: list[AppliedStrategy]) -> str:
+    if len(strategies) == 0:
+        return "Ampel grün"
+    elif len(strategies) < 2:
+        return "Ampel gelb"
+    else:
+        return "Ampel rot"
