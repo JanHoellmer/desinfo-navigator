@@ -17,8 +17,9 @@ services:
 #      SEARXNG_QUERY_URL: "http://searxng:9998/search?q=<query>"
     restart: unless-stopped
   open-webui-pipelines:
-    profiles: [pipelines]
-    image: ghcr.io/open-webui/pipelines:main
+    build:
+      context: ./
+      dockerfile: ./Dockerfile
     depends_on:
       - open-webui
     volumes:
