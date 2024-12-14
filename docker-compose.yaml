@@ -25,6 +25,8 @@ services:
     volumes:
       - pipelines:/app/pipelines
     restart: unless-stopped
+    ports:
+      - "9099:9099"
   litellm:
     build:
       context: .
