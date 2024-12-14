@@ -4,7 +4,8 @@ __pycache__
 /litellm
 
 
-pipelines/*
+pipelines/failed
+pipelines/desinfo
 !pipelines/.gitignore
 .DS_Store
 
