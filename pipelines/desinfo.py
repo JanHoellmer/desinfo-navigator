@@ -83,18 +83,19 @@ cherry_picking_desc = "Sorgfältige Auswahl von Daten, die eine Position zu best
 conspiracy_theory_desc = "Eine Verschwörung zur Umsetzung eines üblen Plans vermuten, wie das Verbergen der Wahrheit oder das Weitergeben von Falschinformationen."
 
 
-class Strategy(Enum, BaseModel):
-    FAKE_EXPERTS = Field(default="Pseudo-Experten", description=fake_experts_desc)
-    LOGICAL_FALLACIES = Field(
-        default="Logischer Trugschluss", description=logical_fallacies_desc
-    )
-    IMPOSSIBLE_EXPECTATIONS = Field(
-        default="Unerfüllbare Erwartungen", description=impossible_expecations_desc
-    )
-    CHERRY_PICKING = Field(default="Rosinenpickerei", description=cherry_picking_desc)
-    CONSPIRACY_THEORIES = Field(
-        default="Verschwörungsmythen", description=conspiracy_theory_desc
-    )
+class Strategy(str, Enum):
+    f"""
+    Pseudo-Experten: {fake_experts_desc}
+    Logischer Trugschluss: {logical_fallacies_desc}
+    Unerfüllbare Erwartungen: {impossible_expecations_desc}
+    Rosinenpickerei: {cherry_picking_desc}
+    Verschwörungsmythen: {conspiracy_theory_desc}
+    """
+    FAKE_EXPERTS = "Pseudo-Experten"
+    LOGICAL_FALLACIES = "Logischer Trugschluss"
+    IMPOSSIBLE_EXPECTATIONS = "Unerfüllbare Erwartungen"
+    CHERRY_PICKING = "Rosinenpickerei"
+    CONSPIRACY_THEORIES = "Verschwörungsmythen"
 
     def get_description(self) -> str:
         if self == Strategy.FAKE_EXPERTS:
@@ -212,36 +213,36 @@ def identify_strategies(
 ) -> list[AppliedStrategy]:
     """identifies strategies from a user message"""
 
-    system_prompt = "Du bist ein sorgfältiger Desinformation-Experte, welcher aus Texten die verwendeten Strategien für Desinformation identifiziert."
+    # system_prompt = "Du bist ein sorgfältiger Desinformation-Experte, welcher aus Texten die verwendeten Strategien für Desinformation identifiziert."
 
-    prompt = """
-    Deine Aufgabe ist es, aus dem [TEXT] Strategien für Desinformationen zu identifizieren und zusammen mit den zugehörigen Textstellen zu extrahieren.
+    # prompt = """
+    # Deine Aufgabe ist es, aus dem [TEXT] Strategien für Desinformationen zu identifizieren und zusammen mit den zugehörigen Textstellen zu extrahieren.
 
-    Hier sind Beispiele für die verschiedenen Strategien:
-    $PLACEHOLDER_STRATEGY_EXAMPLES
+    # Hier sind Beispiele für die verschiedenen Strategien:
+    # $PLACEHOLDER_STRATEGY_EXAMPLES
 
-    [TEXT]
-    $PLACEHOLDER_TEXT
+    # [TEXT]
+    # $PLACEHOLDER_TEXT
 
-    Verwendete Strategien des [TEXT]s:
-    """
-    prompt = prompt.replace("$PLACEHOLDER_TEXT", user_message)
-    prompt = prompt.replace("$PLACEHOLDER_STRATEGY_EXAMPLES", get_strategy_examples())
+    # Verwendete Strategien des [TEXT]s:
+    # """
+    # prompt = prompt.replace("$PLACEHOLDER_TEXT", user_message)
+    # prompt = prompt.replace("$PLACEHOLDER_STRATEGY_EXAMPLES", get_strategy_examples())
 
-    client = instructor.from_openai(openai_client)
+    # client = instructor.from_openai(openai_client)
 
-    completion: ExtractedStrategies = client.chat.completions.create(
-        model=deployment,
-        response_model=ExtractedStrategies,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt},
-        ],
-    )
+    # completion: ExtractedStrategies = client.chat.completions.create(
+    #     model=deployment,
+    #     response_model=ExtractedStrategies,
+    #     messages=[
+    #         {"role": "system", "content": system_prompt},
+    #         {"role": "user", "content": prompt},
+    #     ],
+    # )
 
-    return [AppliedStrategy(**strategy) for strategy in completion.strategies]
+    # return [AppliedStrategy(strategy) for strategy in completion.strategies]
 
-    # return AppliedStrategy.return_example_list()
+    return AppliedStrategy.return_example_list()
 
 
 def is_first_message(messages: list[dict]) -> bool:
@@ -258,18 +259,23 @@ def get_ampel(strategies: list[AppliedStrategy]) -> str:
 
 
 def get_strategy_examples() -> str:
-    df = pd.read_excel("../Beispiel.xlsx", sheet_name="Sheet1")
+    df = pd.read_excel("./Beispiele.xlsx", sheet_name="Sheet1")
     df.sort_values(by="PLURV-Kategorie")
+    strategy_description = {
+        "P": Strategy.FAKE_EXPERTS,
+        "L": Strategy.LOGICAL_FALLACIES,
+        "U": Strategy.IMPOSSIBLE_EXPECTATIONS,
+        "R": Strategy.CHERRY_PICKING,
+        "V": Strategy.CONSPIRACY_THEORIES
+    }
 
     def get_category_examples():
-        for strategy in df["PLURV-Kategorie"].unique():
-            strategy_description = {}
+        for strategy in strategy_description.keys():
             examples = "\n".join(
                 [
                     f"\tBeispiel {i}: {example}"
                     for i, example in enumerate(
                         df[df["PLURV-Kategorie"] == strategy]["Aussage"]
-                        .values()
                         .to_list()
                     )
                 ]
