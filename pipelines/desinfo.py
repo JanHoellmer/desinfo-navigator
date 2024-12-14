@@ -114,10 +114,10 @@ class Strategy(str, Enum):
 
 class AppliedStrategy(BaseModel):
     strategy: Strategy = Field(
-        description="Die Strategie, welche möglicherweise angewendet wurde."
+        description="Die Strategie der Desinformation, welche möglicherweise angewendet wurde."
     )
     content: str = Field(
-        description="Der Textstelle des Textes, auf die möglicherweise die Strategie angewendet wurde."
+        description="Der Textstelle des Textes, bei der möglicherweise die Strategie der Desinformation angewendet wurde."
     )
 
     @classmethod
@@ -138,22 +138,22 @@ class AppliedStrategy(BaseModel):
 
         text = original_text.replace("\n", " ")
         prompt = f"""
-        Aufgabe:
-            Du erhältst einen originalen Text und eine Textpassage daraus.
-            Dazu wird eine Argumentationsstrategie angegeben, die eventuell angewendet wurde, sowie eine kurze Erklärung, was diese Strategie ist.
+        Du erhältst einen originalen Text und eine Textpassage daraus.
+        Für diese Testpassage wurde identifiziert, dass eventuell die Strategie {self.strategy.value} zur Verbreitung von Desinfomration verwendet wurde.
+        Die Strategie {self.strategy.value} umfasst dabei folgendes: {self.strategy.get_description()}
 
         Deine Aufgaben:
-            Erläutere mit Hilfe der Textpassage wie die Strategie möglicherweise angewendet wurde und welche Aspekte recherchiert oder überlegt werden müssen, um zu entscheiden, ob die Strategie tatsächlich angewendet wurde.
-
-        In deiner Antwort solltest du die Anwendung der Strategie anhand der Textpassage erläutern und eine konrete Handlungsanweisung geben, mit der überprüft werden kann, ob diese Strategie angewendet wurde.
-        Fasse dich dabei sehr kurz (maximal 2 prägnante Sätze).
-        Berücksichtige dabei, dass noch nicht bestätigt ist, dass die Strategie wirklich angewendet wurde. Formuliere dementsprechend Teile passend im Konjunktiv.
+            Erläutere in Bezug auf die Textpassage, wie die Strategie {self.strategy.value} möglicherweise angewendet wurde.
+            Gib zuzsätzlich konkrete Handlungsanweisungen, wie überprüft werden kann, ob die Strategie {self.strategy.value} tatsächlich angewendet wurde.
+            Fasse dich dabei sehr kurz (maximal 2 prägnante, aber leicht verständliche Sätze).
+            Statt "In der Textpassage" kannst du einfach mit "Hier" Bezug zur Passage nehmen.
+            Berücksichtige unbedingt, dass noch nicht bestätigt ist, dass die Strategie {self.strategy.value} wirklich angewendet wurde. Formuliere dementsprechend Teile passend im Konjunktiv.
 
         Input:
             Originaler Text: {text}
-            Textpassage: {self.content}
-            Verwendete Strategie der Desinformation: {self.strategy.value}
-            Erklärung der Strategie: {self.strategy.get_description()}
+            Textpassage, bei der die potenzielle Strategie {self.strategy.value} identifiziert wurde: {self.content}
+        
+        Prägnante Erläuterung der potenziellen Strategie {self.strategy.value} in Bezug auf die Textpassage + konkrete Handlungsanweisungen, um dies zu überprüfen:
         """
 
         completion = openai_client.chat.completions.create(
@@ -166,13 +166,30 @@ class AppliedStrategy(BaseModel):
 
         return completion.choices[0].message.content
 
-    def stringify_long(self, original_text: str, openai_client: AzureOpenAI) -> str:
-        return f"""\t- Definition: {self.strategy.get_description()}
-        \t- Passage: {self.content}
-        \t- Individueller Denkauftrag: {self.create_action(original_text=original_text, openai_client=openai_client)}"""
-
-    def stringify_short(self) -> str:
-        return f"\t- {self.strategy.value}"
+    @classmethod
+    def stringify_long(cls, strategies: list[AppliedStrategy], original_text: str, openai_client: AzureOpenAI) -> str:
+        strategy_map: dict[Strategy, list[AppliedStrategy]] = {}
+        for strategy in strategies:
+            if strategy.strategy not in strategy_map:
+                strategy_map[strategy.strategy] = []
+            strategy_map[strategy.strategy].append(strategy)
+        texts = []
+        for strategy, applied_strategies in strategy_map.items():
+            texts.append(f"### {strategy.value}")
+            for applied_strategy in applied_strategies:
+                texts.append(f"> {applied_strategy.content}\n\n{applied_strategy.create_action(original_text=original_text, openai_client=openai_client)}")
+            texts.append("\n")
+        return "\n".join(texts)
+    
+    @classmethod
+    def stringify_short(cls, strategies: list[AppliedStrategy]) -> str:
+        #group for strategy
+        strategy_map: dict[Strategy, list[AppliedStrategy]] = {}
+        for strategy in strategies:
+            if strategy.strategy not in strategy_map:
+                strategy_map[strategy.strategy] = []
+            strategy_map[strategy.strategy].append(strategy)
+        return "\n".join([f"\t- {strategy.value} ({len(applied_strategies)}x)" for strategy, applied_strategies in strategy_map.items()])
 
     @classmethod
     def construct_answer_from_list(
@@ -181,23 +198,18 @@ class AppliedStrategy(BaseModel):
         original_text: str,
         openai_client: AzureOpenAI,
     ) -> str:
-        individual_strategies_long = "\n\n".join(
-            [
-                strategy.stringify_long(original_text, openai_client)
-                for strategy in strategies
-            ]
-        )
-        individual_strategies_short = "\n".join(
-            [strategy.stringify_short() for strategy in strategies]
-        )
+        individual_strategies_long = AppliedStrategy.stringify_long(strategies, original_text, openai_client)
+        individual_strategies_short = AppliedStrategy.stringify_short(strategies=strategies)
+
+        if len(strategies) == 0:
+            return f"# {get_ampel(strategies)}\n\nEs wurden keine Anzeichen auf Strategien für Desinformation gefunden."
 
         return f"""# {get_ampel(strategies)}
 
-
-## Es liegen folgende Merkmale von Desinformation vor
+## Es liegen folgende Strategien von Desinformation vor
 {individual_strategies_short}
 
-## Individuelle Anweisungen
+## Individuelle Textstellen
 {individual_strategies_long}"""
 
 
@@ -213,36 +225,39 @@ def identify_strategies(
 ) -> list[AppliedStrategy]:
     """identifies strategies from a user message"""
 
-    # system_prompt = "Du bist ein sorgfältiger Desinformation-Experte, welcher aus Texten die verwendeten Strategien für Desinformation identifiziert."
+    system_prompt = "Du bist ein sorgfältiger Desinformation-Experte, welcher aus Texten die verwendeten Strategien für Desinformation identifiziert."
 
-    # prompt = """
-    # Deine Aufgabe ist es, aus dem [TEXT] Strategien für Desinformationen zu identifizieren und zusammen mit den zugehörigen Textstellen zu extrahieren.
+    prompt = """
+    Deine Aufgabe ist es, aus dem [TEXT] Strategien für Desinformationen zu identifizieren und zusammen mit den zugehörigen Textstellen zu extrahieren.
+    Beachte, dass die gleiche Strategie an mehreren Stellen im [TEXT] vorkommen kann.
+    Außerdem kann die gleiche Textstelle auch mehrere Strategien umfassen.
+    
+    Hier sind Beispiele für die verschiedenen Strategien des Desinformation:
+    $PLACEHOLDER_STRATEGY_EXAMPLES
 
-    # Hier sind Beispiele für die verschiedenen Strategien:
-    # $PLACEHOLDER_STRATEGY_EXAMPLES
+    [TEXT]
+    $PLACEHOLDER_TEXT
 
-    # [TEXT]
-    # $PLACEHOLDER_TEXT
+    Verwendete Strategien des [TEXT]s mit zugehörigen Textstellen:
+    """
+    prompt = prompt.replace("$PLACEHOLDER_TEXT", user_message)
+    prompt = prompt.replace("$PLACEHOLDER_STRATEGY_EXAMPLES", get_strategy_examples())
 
-    # Verwendete Strategien des [TEXT]s:
-    # """
-    # prompt = prompt.replace("$PLACEHOLDER_TEXT", user_message)
-    # prompt = prompt.replace("$PLACEHOLDER_STRATEGY_EXAMPLES", get_strategy_examples())
+    client = instructor.from_openai(openai_client)
 
-    # client = instructor.from_openai(openai_client)
+    completion: ExtractedStrategies = client.chat.completions.create(
+        model=deployment,
+        response_model=ExtractedStrategies,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0
+    )
 
-    # completion: ExtractedStrategies = client.chat.completions.create(
-    #     model=deployment,
-    #     response_model=ExtractedStrategies,
-    #     messages=[
-    #         {"role": "system", "content": system_prompt},
-    #         {"role": "user", "content": prompt},
-    #     ],
-    # )
+    return [AppliedStrategy(**strategy.model_dump()) for strategy in completion.strategies]
 
-    # return [AppliedStrategy(strategy) for strategy in completion.strategies]
-
-    return AppliedStrategy.return_example_list()
+    # return AppliedStrategy.return_example_list()
 
 
 def is_first_message(messages: list[dict]) -> bool:
