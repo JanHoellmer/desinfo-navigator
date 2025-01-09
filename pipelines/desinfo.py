@@ -143,9 +143,9 @@ class AppliedStrategy(BaseModel):
         Die Strategie {self.strategy.value} umfasst dabei folgendes: {self.strategy.get_description()}
 
         Deine Aufgaben:
-            Erläutere in Bezug auf die Textpassage, wie die Strategie {self.strategy.value} möglicherweise angewendet wurde.
-            Gib zuzsätzlich konkrete Handlungsanweisungen, wie überprüft werden kann, ob die Strategie {self.strategy.value} tatsächlich angewendet wurde.
-            Fasse dich dabei sehr kurz (maximal 2 prägnante, aber leicht verständliche Sätze).
+            Erläutere in Bezug auf die Textpassage, wie die Strategie {self.strategy.value} möglicherweise angewendet wurde (maximal 2 prägnante Sätze).
+            Gib zuzsätzlich konkrete Handlungsanweisungen, wie überprüft werden kann, ob die Strategie {self.strategy.value} tatsächlich angewendet wurde (maximal ein prägnanter Satz).
+            Verwende dabei einfache Alltagssprache.
             Statt "In der Textpassage" kannst du einfach mit "Hier" Bezug zur Passage nehmen.
             Berücksichtige unbedingt, dass noch nicht bestätigt ist, dass die Strategie {self.strategy.value} wirklich angewendet wurde. Formuliere dementsprechend Teile passend im Konjunktiv.
 
@@ -178,7 +178,7 @@ class AppliedStrategy(BaseModel):
             texts.append(f"### {strategy.value}")
             for applied_strategy in applied_strategies:
                 texts.append(f"> {applied_strategy.content}\n\n{applied_strategy.create_action(original_text=original_text, openai_client=openai_client)}")
-            texts.append("\n")
+            texts.append("\n\n")
         return "\n".join(texts)
     
     @classmethod
@@ -206,7 +206,7 @@ class AppliedStrategy(BaseModel):
 
         return f"""# {get_ampel(strategies)}
 
-## Es liegen folgende Strategien von Desinformation vor
+## Es liegen ggf. folgende Strategien von Desinformation vor
 {individual_strategies_short}
 
 ## Individuelle Textstellen
